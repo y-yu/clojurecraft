@@ -8,7 +8,7 @@
   (:import [clojurecraft.data Location Entity Chunk])
   (:import (java.util.zip Inflater)))
 
-(def FULL-CHUNK (* 16 16 128))
+(def FULL-CHUNK (* 16 16 256))
 (def BLANK-CHUNK-ARRAY (byte-array FULL-CHUNK))
 
 ; Convenience Functions ------------------------------------------------------------
@@ -148,13 +148,12 @@
 (defn- read-packet-login [bot conn]
   (assoc {}
          :eid (-read-int conn)
-         :unknown (-read-string-ucs2 conn)
-         :seed (-read-long conn)
+         :unknown1 (-read-string-ucs2 conn)
          :leveltype (-read-string-ucs2 conn)
          :servermode (-read-int conn)
-         :dimension (-read-byte conn)
+         :dimensione(-read-int conn)
          :difficulty (-read-byte conn)
-         :worldheight (-read-byte-unsigned conn)
+         :unknown2 (-read-byte-unsigned conn)
          :maxplayers (-read-byte-unsigned conn)))
 
 (defn- read-packet-chat [bot conn]
@@ -200,11 +199,10 @@
 
 (defn- read-packet-respawn [bot conn]
   (assoc {}
-         :world (-read-byte conn)
+         :dimension (-read-int conn)
          :difficulty (-read-byte conn)
          :creative (-read-byte conn)
          :worldheight (-read-short conn)
-         :mapseed (-read-long conn)
          :leveltype (-read-string-ucs2 conn)))
 
 (defn- read-packet-playerpositionlook [bot conn]
@@ -330,6 +328,7 @@
          :z (-read-int conn)
          :yaw (-read-byte conn)
          :pitch (-read-byte conn)
+         :headyaw (-read-byte conn)
          :datastream (-read-metadata conn)))
 
 (defn- read-packet-entitypainting [bot conn]
@@ -423,6 +422,11 @@
         (alter entity assoc :loc new-loc)))
     payload))
 
+(defn- read-packet-entityheadlook [bot conn]
+  (assoc {}
+         :eid (-read-int conn)
+         :entitystatus (-read-byte conn)))
+
 (defn- read-packet-entitystatus [bot conn]
   (let [payload (assoc {}
                        :eid (-read-int conn)
@@ -486,25 +490,26 @@
       (let [chunk (ref (Chunk. BLANK-CHUNK-ARRAY
                                BLANK-CHUNK-ARRAY
                                BLANK-CHUNK-ARRAY
+                               BLANK-CHUNK-ARRAY
+                               BLANK-CHUNK-ARRAY
                                BLANK-CHUNK-ARRAY))]
         (alter chunks assoc coords chunk)
         chunk)))
 
 (defn- -decode-mapchunk [postdata data-ba]
-  (let [len (* (:sizex postdata) (:sizey postdata) (:sizez postdata))
-        data (into (vector-of :byte) data-ba) ; Make the data a vector for easier parsing.
-        block-types (byte-array (subvec data 0 len))
-        data (subvec data len)]
-    (let [[block-metadata data] (-parse-nibbles len data)
-          [block-light data] (-parse-nibbles len data)
-          [sky-light data] (-parse-nibbles len data)]
-      [block-types block-metadata block-light sky-light])))
+  (let [[block-types data] [(take 4096 data-ba) (drop 4096 data-ba)]
+        [block-metadata data] (-parse-nibbles 2048 data)
+        [block-light data] (-parse-nibbles 2048 data)
+        [sky-light data] (-parse-nibbles 2048 data)
+        [add-array data] (-parse-nibbles 2048 data)]
 
-(defn- -decompress-mapchunk [postdata]
-  (let [buffer (byte-array (/ (* 5
-                                 (:sizex postdata)
-                                 (:sizey postdata)
-                                 (:sizez postdata)) 2))
+    (if (nil? data)
+      [block-types block-metadata block-light sky-light nil]
+      (let [biome-array data] (take 256 data)
+        [block-types block-metadata block-light sky-light biome-array]))))
+
+(defn- -decompress-mapchunk [{:keys [groundupcontinuous] :as postdata}] 
+  (let [buffer (byte-array (+ (+ 4096 2048 2048 2048 2048) (if groundupcontinuous 256 0)))
         decompressor (Inflater.)]
     (.setInput decompressor (:raw-data postdata) 0 (:compressedsize postdata))
     (.inflate decompressor buffer)
@@ -514,46 +519,45 @@
 (defn- -read-mapchunk-predata [conn]
   (assoc {}
          :x (-read-int conn)
-         :y (-read-short conn)
          :z (-read-int conn)
-         :sizex (+ 1 (-read-byte conn))
-         :sizey (+ 1 (-read-byte conn))
-         :sizez (+ 1 (-read-byte conn))
-         :compressedsize (-read-int conn)))
-
+         :groundupcontinuous (-read-bool conn)
+         :primarybitmap (-read-short conn)
+         :addbitmap (-read-short conn)
+         :compressedsize (-read-int conn)
+         :unknown (-read-int conn)))
 
 (defn- -chunk-from-full-data [postdata]
   (let [decompressed-data (-decompress-mapchunk postdata)
-        [types meta light sky] (-decode-mapchunk postdata decompressed-data)] ; These are all byte-array's!
-    (Chunk. types meta light sky)))
+       [types meta light sky add biome] (-decode-mapchunk postdata decompressed-data)] ; These are all byte-array's!
+    (Chunk. types meta light sky add biome)))
 
 (defn- -chunk-from-partial-data [{{chunks :chunks} :world} postdata]
   (let [x (:x postdata)
-        y (:y postdata)
         z (:z postdata)
         decompressed-data (-decompress-mapchunk postdata)
-        [types meta light sky] (-decode-mapchunk postdata decompressed-data)  ; These are all byte-array's!
+        [types meta light sky add biome] (-decode-mapchunk postdata decompressed-data)  ; These are all byte-array's!
         chunk-coords (coords-of-chunk-containing x z)
-        chunk (force (-get-or-make-chunk chunks chunk-coords))
-        start-index (block-index-in-chunk x y z)]
-    (Chunk. (replace-array-slice (:types (force @chunk)) start-index types)
-            (replace-array-slice (:metadata (force @chunk)) start-index meta)
-            (replace-array-slice (:light (force @chunk)) start-index light)
-            (replace-array-slice (:sky-light (force @chunk)) start-index sky))))
+        chunk (force (-get-or-make-chunk chunks chunk-coords))]
+    (Chunk. (replace-array-slice (:types (force @chunk)) 0 types)
+            (replace-array-slice (:metadata (force @chunk)) 0 meta)
+            (replace-array-slice (:light (force @chunk)) 0 light)
+            (replace-array-slice (:sky-light (force @chunk)) 0 sky)
+            (replace-array-slice (:add (force @chunk)) 0 add)
+            (replace-array-slice (:biome (force @chunk)) 0 biome))))
 
 (defn- read-packet-mapchunk [bot conn]
   (let [predata (-read-mapchunk-predata conn)
-        postdata (assoc predata :raw-data (-read-bytearray-bare conn
-                                                                (:compressedsize predata)))
-        chunk-size (* (:sizex postdata) (:sizey postdata) (:sizez postdata))
+        postdata (assoc predata :raw-data (-read-bytearray-bare conn (:compressedsize predata)))
+
+    ;(println (take 256 (drop 12288 (vec (-decompress-mapchunk postdata)))))
+    ;(. Thread (sleep 10000))))
+        ;chunk-size (* (:x postdata) (:z postdata))
         chunk-coords (coords-of-chunk-containing (:x postdata) (:z postdata))]
     (dosync (alter (:chunks (:world bot))
-                   assoc chunk-coords (if (= FULL-CHUNK chunk-size)
+                   assoc chunk-coords ;(if (= FULL-CHUNK chunk-size)
                                         (ref (delay (-chunk-from-full-data postdata)))
-                                        (ref (-chunk-from-partial-data bot postdata)))))
-    predata))
-
-
+                                        ;(ref (-chunk-from-partial-data bot postdata)))))
+    predata))))
 
 (defn update-delayed [chunk index type meta]
   (let [chunk (force chunk)]
@@ -704,6 +708,16 @@
                   :textlength (-read-int conn))]
     (assoc pretext :text (-read-bytearray (:textlength pretext)))))
 
+(defn- read-packet-updatetileentity [bot conn]
+  (assoc {}
+         :x (-read-int conn)
+         :y (-read-short conn)
+         :z (-read-int conn)
+         :action (-read-byte conn)
+         :custom1 (-read-int conn)
+         :custom2 (-read-int conn)
+         :custom3 (-read-int conn)))
+
 (defn- read-packet-incrementstatistic [bot conn]
   (assoc {}
     :statisticid (-read-int conn)
@@ -714,6 +728,13 @@
     :playername (-read-string-ucs2 conn)
     :online (-read-bool conn)
     :ping (-read-short conn)))
+
+(defn- read-packet-playerabilities [bot conn]
+  (assoc {}
+         :invulnerability (-read-bool conn)
+         :isflying (-read-bool conn)
+         :canfly (-read-bool conn)
+         :instantdestroy (-read-bool conn)))
 
 (defn- read-packet-pluginmessage [bot conn]
   (let [predata (assoc {}
@@ -757,6 +778,7 @@
                      :entitylook                read-packet-entitylook
                      :entitylookandrelativemove read-packet-entitylookandrelativemove
                      :entityteleport            read-packet-entityteleport
+                     :entityheadlook            read-packet-entityheadlook
                      :entitystatus              read-packet-entitystatus
                      :attachentity              read-packet-attachentity
                      :entitymetadata            read-packet-entitymetadata
@@ -782,13 +804,15 @@
                      :enchantitem               read-packet-enchantitem
                      :updatesign                read-packet-updatesign
                      :mapdata                   read-packet-mapdata
+                     :updatetileentity          read-packet-updatetileentity
                      :incrementstatistic        read-packet-incrementstatistic
                      :playerlistitem            read-packet-playerlistitem
+                     :playerabilities           read-packet-playerabilities
                      :pluginmessage             read-packet-pluginmessage
                      :disconnectkick            read-packet-disconnectkick})
 
 ; Reading Wrappers -----------------------------------------------------------------
-(defn read-packet [bot prev prev-prev prev-prev-prev]
+(defn read-packet [bot prev prev-prev prev-prev-prev & hoge]
   (let [conn (:connection bot)
         packet-id-byte (to-unsigned (-read-byte conn))]
     (let [packet-id (when (not (nil? packet-id-byte))
@@ -805,6 +829,8 @@
                  (inc current))))
 
       ; Handle packet
+      (println packet-type)
+      ;(println hoge)
       (if (nil? packet-type)
         (do
           (println "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")

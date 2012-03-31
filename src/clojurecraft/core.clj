@@ -33,28 +33,26 @@
 (defn- random-username []
    (apply str (repeatedly 10 #(rand-nth "abcdefghijklmnopqrstuvwxyz"))))
 
-(defn login [bot username]
+(defn login [bot server username]
   ; Send handshake
-  (write-packet bot :handshake {:username username})
+  (write-packet bot :handshake {:server server :username username})
 
   ; Get handshake
   (read-packet bot nil nil nil)
 
   ; Send login
-  (write-packet bot :login {:version 23 :username username})
+  (write-packet bot :login {:version 29 :username username})
 
   ; Get login
   (get (get (read-packet bot nil nil nil) 0) 1))
-
 
 (defn input-handler [bot]
   (let [conn (:connection bot)]
     (loop [prevs [nil nil nil]]
       (when (nil? (:exit @conn))
-        (recur (read-packet bot (get prevs 0) (get prevs 1) (get prevs 2))))))
+        (recur (read-packet bot (get prevs 0) (get prevs 1) (get prevs 2) :hoge)))))
   (println "done - input handler")
   (println "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"))
-
 
 (defn update-location [bot]
   (when (chunks/current bot)
@@ -121,7 +119,7 @@
 
     ; We need to log in to find out our bot's entity ID, so we delay creation of the
     ; player until then.
-    (let [player-id (:eid (login bot username))
+    (let [player-id (:eid (login bot server username))
           player (ref (Entity. player-id nil username nil false 0.0))
           bot (assoc bot :player player)]
 

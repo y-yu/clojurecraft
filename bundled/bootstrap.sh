@@ -17,7 +17,7 @@ URL='https://s3.amazonaws.com/MinecraftDownload/launcher/minecraft_server.jar?v=
 cd bundled
 
 if [ $WGET_INSTALLED -eq 0 ]; then
-    wget "$URL" -O minecraft_server.jar
+    wget --no-check-certificate "$URL" -O minecraft_server.jar
 elif [ $CURL_INSTALLED -eq 0 ]; then
     curl -o minecraft_server.jar "$URL"
 else

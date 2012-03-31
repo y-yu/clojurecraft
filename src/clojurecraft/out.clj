@@ -47,8 +47,8 @@
 (defn- write-packet-keepalive [conn {keep-alive-id :keep-alive-id}]
   (-write-int conn keep-alive-id))
 
-(defn- write-packet-handshake [conn {username :username}]
-  (-write-string-ucs2 conn username))
+(defn- write-packet-handshake [conn {server :server username :username}]
+  (-write-string-ucs2 conn (str username \; (:name server) \: (:port server))))
 
 (defn- write-packet-login [conn {version :version, username :username}]
   (-write-int conn version)
@@ -276,6 +276,7 @@
   (doto ^DataOutputStream (:out @conn) (.flush)))
 
 (defn write-packet [bot packet-type payload]
+  (println (str \> packet-type))
   (let [conn (:connection bot)
         handler (packet-type packet-writers)]
 

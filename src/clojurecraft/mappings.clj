@@ -37,6 +37,7 @@
   0x20 :entitylook
   0x21 :entitylookandrelativemove
   0x22 :entityteleport
+  0x23 :entityheadlook
   0x26 :entitystatus
   0x27 :attachentity
   0x28 :entitymetadata
@@ -63,8 +64,10 @@
   0x6C :enchantitem
   0x82 :updatesign
   0x83 :mapdata
+  0x84 :updatetileentity
   0xC8 :incrementstatistic
   0xC9 :playerlistitem
+  0xCA :playerabilities
   0xFA :pluginmessage
   0xFF :disconnectkick
 })
