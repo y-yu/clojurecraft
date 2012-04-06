@@ -276,7 +276,7 @@
   (doto ^DataOutputStream (:out @conn) (.flush)))
 
 (defn write-packet [bot packet-type payload]
-  (println (str \> packet-type))
+  ;(println (str \> packet-type))
   (let [conn (:connection bot)
         handler (packet-type packet-writers)]
 

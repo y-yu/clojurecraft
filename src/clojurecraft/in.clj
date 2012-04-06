@@ -408,9 +408,9 @@
   ; TODO: record yaw/pitch
   (let [payload (assoc {}
                        :eid (-read-int conn)
-                       :x (float (/ (-read-int conn) 32))
-                       :y (float (/ (-read-int conn) 32))
-                       :z (float (/ (-read-int conn) 32))
+                       :x (-read-int conn)
+                       :y (-read-int conn)
+                       :z (-read-int conn)
                        :yaw (-read-byte conn)
                        :pitch (-read-byte conn))]
     #_(dosync
@@ -472,18 +472,18 @@
          :mode (-read-bool conn)))
 
 
-(defn- -parse-nibbles [len data]
+(defn- -parse-nibbles [data start len]
   (loop [i 0
          nibbles []
-         data data]
+         data (drop start data)]
     (if (= i len)
-      [(byte-array nibbles) data]
-      (let [next-byte (get data 0)
+      (byte-array (/ len 2) nibbles)
+      (let [next-byte (first data)
             top-byte (top next-byte)
             bottom-byte (bottom next-byte)]
         (recur (+ i 2)
                (conj nibbles bottom-byte top-byte)
-               (subvec data 1))))))
+               (drop 1 data))))))
 
 (defn- -get-or-make-chunk [chunks coords]
   (or (@chunks coords)
@@ -496,24 +496,36 @@
         (alter chunks assoc coords chunk)
         chunk)))
 
-(defn- -decode-mapchunk [postdata data-ba]
-  (let [[block-types data] [(take 4096 data-ba) (drop 4096 data-ba)]
-        [block-metadata data] (-parse-nibbles 2048 data)
-        [block-light data] (-parse-nibbles 2048 data)
-        [sky-light data] (-parse-nibbles 2048 data)
-        [add-array data] (-parse-nibbles 2048 data)]
+(defn- -decode-mapchunk [{:keys [groundupcontinuous primarybitmap]} data-ba]
+  (loop [bitmap (reverse (nbyte-seq primarybitmap))
+         data (vec data-ba)
+         block-types []
+         block-metadata []
+         block-light []
+         sky-light []
+         add-array []]
+    (if (= (first bitmap) 1)
+      (recur
+        (drop 1 bitmap)
+        (vec (drop 12544 data))
+        (concat block-types (take 4096 data))
+        (concat block-metadata (-parse-nibbles data 4096 4096))
+        (concat block-light (-parse-nibbles data 4096 4096))
+        (concat sky-light (-parse-nibbles data 4096 4096))
+        (concat add-array (-parse-nibbles data 4096 4096)))
+      (if (nil? data)
+        [block-types block-metadata block-light sky-light []]
+        [block-types block-metadata block-light sky-light []]))))
 
-    (if (nil? data)
-      [block-types block-metadata block-light sky-light nil]
-      (let [biome-array data] (take 256 data)
-        [block-types block-metadata block-light sky-light biome-array]))))
 
-(defn- -decompress-mapchunk [{:keys [groundupcontinuous] :as postdata}] 
-  (let [buffer (byte-array (+ (+ 4096 2048 2048 2048 2048) (if groundupcontinuous 256 0)))
+(defn- -decompress-mapchunk [{:keys [groundupcontinuous primarybitmap] :as postdata}]
+  (let [bitmap (nbyte-seq primarybitmap)
+        buffer (byte-array (+ (* 12288 (count bitmap)) (if (true? groundupcontinuous) 256 0)))
         decompressor (Inflater.)]
     (.setInput decompressor (:raw-data postdata) 0 (:compressedsize postdata))
     (.inflate decompressor buffer)
     (.end decompressor)
+    ;(spit "abc.txt" (vec buffer))
     buffer))
 
 (defn- -read-mapchunk-predata [conn]
@@ -535,7 +547,7 @@
   (let [x (:x postdata)
         z (:z postdata)
         decompressed-data (-decompress-mapchunk postdata)
-        [types meta light sky add biome] (-decode-mapchunk postdata decompressed-data)  ; These are all byte-array's!
+        [types meta light sky add biome] (-decode-mapchunk decompressed-data)  ; These are all byte-array's!
         chunk-coords (coords-of-chunk-containing x z)
         chunk (force (-get-or-make-chunk chunks chunk-coords))]
     (Chunk. (replace-array-slice (:types (force @chunk)) 0 types)
@@ -549,15 +561,12 @@
   (let [predata (-read-mapchunk-predata conn)
         postdata (assoc predata :raw-data (-read-bytearray-bare conn (:compressedsize predata)))
 
-    ;(println (take 256 (drop 12288 (vec (-decompress-mapchunk postdata)))))
-    ;(. Thread (sleep 10000))))
-        ;chunk-size (* (:x postdata) (:z postdata))
-        chunk-coords (coords-of-chunk-containing (:x postdata) (:z postdata))]
+        chunk-coords [(:x postdata) (:z postdata)]
+        data-ba (-decompress-mapchunk postdata)]
     (dosync (alter (:chunks (:world bot))
-                   assoc chunk-coords ;(if (= FULL-CHUNK chunk-size)
-                                        (ref (delay (-chunk-from-full-data postdata)))
-                                        ;(ref (-chunk-from-partial-data bot postdata)))))
-    predata))))
+                   assoc chunk-coords 
+                   (ref (delay (-chunk-from-full-data postdata)))))
+    predata))
 
 (defn update-delayed [chunk index type meta]
   (let [chunk (force chunk)]
@@ -584,22 +593,32 @@
                           (:blocktype data) (:blockmetadata data))
     data))
 
+(defn- -bytearray-to-num [bytearray]
+  (reduce + (map pow (reverse bytearray) (iterate inc 0))))
+
 (defn- read-packet-multiblockchange [bot conn]
   (let [prearrays (assoc {}
-                         :chunkx (-read-int conn)
-                         :chunkz (-read-int conn)
-                         :arraysize (-read-short conn))
-        payload (assoc prearrays
-                       :coordinatearray (-read-shortarray conn (:arraysize prearrays))
-                       :typearray (-read-bytearray conn (:arraysize prearrays))
-                       :metadataarray (-read-bytearray conn (:arraysize prearrays)))
-        parse-coords (fn [s] [(top-4 s) (mid-4 s) (bottom-8 s)])
-        coords (map parse-coords (:coordinatearray payload))]
-    (dorun (map #(-update-single-block bot (get %1 0) (get %1 2) (get %1 1) %2 %3)
-                coords
-                (:typearray payload)
-                (:metadataarray payload)))
-    payload))
+                         :x (-read-int conn)
+                         :z (-read-int conn)
+                         :arraysize (-read-short conn)
+                         :datasize (-read-int conn)
+                         :dataarray [])]
+    (let [payload (loop [i 0
+                         payload prearrays]
+                    (if (>= i (:arraysize prearrays))
+                           payload
+                           (recur (+ i 1)
+                                  (assoc payload
+                                         :dataarray (conj (:dataarray payload)
+                                                          (-read-int conn))))))]
+      (dorun (map 
+               #(-update-single-block bot
+                                      (* (bit-and % 0xf0000000) (:x payload))  ;x coords
+                                      (bit-and % 0xff0000)  ;y coords
+                                      (* (bit-and % 0xf000000) (:z payload))  ;z coords
+                                      (bit-and % 0xf)  ;block id
+                                      (bit-and % 0xfff0))  ;meta data                              
+               (:dataarray payload))) payload)))
 
 
 (defn- read-packet-playnoteblock [bot conn]
@@ -812,7 +831,7 @@
                      :disconnectkick            read-packet-disconnectkick})
 
 ; Reading Wrappers -----------------------------------------------------------------
-(defn read-packet [bot prev prev-prev prev-prev-prev & hoge]
+(defn read-packet [bot prev prev-prev prev-prev-prev]
   (let [conn (:connection bot)
         packet-id-byte (to-unsigned (-read-byte conn))]
     (let [packet-id (when (not (nil? packet-id-byte))
@@ -829,8 +848,6 @@
                  (inc current))))
 
       ; Handle packet
-      (println packet-type)
-      ;(println hoge)
       (if (nil? packet-type)
         (do
           (println "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")

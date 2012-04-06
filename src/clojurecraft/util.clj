@@ -47,6 +47,14 @@
 (defn any? [s]
   (seq (filter identity s)))
 
+(defn pow [number index]
+  (loop [i 1
+         a 1]
+    (if (> i index)
+      a
+      (recur
+        (inc i)
+        (* a number)))))
 
 ; Bytes ----------------------------------------------------------------------------
 (defn byte-seq [b]
@@ -54,6 +62,18 @@
     (if (< n 8)
       (recur (inc n) (bit-shift-right b 1) (conj s (bit-and b 1)))
       (reverse s))))
+
+(defn nbyte-seq [b]
+  (loop [b b
+         s []]
+    (if (> b 0)
+      (recur
+        (bit-shift-right b 1)
+        (conj s (bit-and b 1)))
+      (reverse
+      (if (nil? s)
+        (conj s 0)
+        s)))))
 
 (defn top [b]
   (byte (bit-shift-right (bit-and b 0xf0) 4)))

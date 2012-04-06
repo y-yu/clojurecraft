@@ -50,7 +50,7 @@
   (let [conn (:connection bot)]
     (loop [prevs [nil nil nil]]
       (when (nil? (:exit @conn))
-        (recur (read-packet bot (get prevs 0) (get prevs 1) (get prevs 2) :hoge)))))
+        (recur (read-packet bot (get prevs 0) (get prevs 1) (get prevs 2))))))
   (println "done - input handler")
   (println "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"))
 
