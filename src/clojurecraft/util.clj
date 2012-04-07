@@ -63,17 +63,33 @@
       (recur (inc n) (bit-shift-right b 1) (conj s (bit-and b 1)))
       (reverse s))))
 
-(defn nbyte-seq [b]
-  (loop [b b
-         s []]
+(defn- -nbyte-seq [b]
+  (loop [s []
+         b b]
     (if (> b 0)
       (recur
-        (bit-shift-right b 1)
-        (conj s (bit-and b 1)))
-      (reverse
-      (if (nil? s)
-        (conj s 0)
-        s)))))
+        (cons (bit-and b 1) s)
+        (bit-shift-right b 1))
+      (vec s))))
+
+(defmulti true-bit-count class)
+
+(defmethod true-bit-count Number [b]
+  (true-bit-count (-nbyte-seq b)))
+
+(defmethod true-bit-count clojure.lang.PersistentVector [s]
+  (loop [s s
+         i 0]
+    (if (= (count s) 0)
+      i
+      (recur
+        (pop s)
+        (if (= (peek s) 1)
+          (inc i)
+          i)))))
+
+(defmethod true-bit-count nil [n]
+  0)
 
 (defn top [b]
   (byte (bit-shift-right (bit-and b 0xf0) 4)))

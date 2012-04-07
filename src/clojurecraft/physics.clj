@@ -31,13 +31,10 @@
     (min velocity MAX-HORIZONTAL-VELOCITY)
     (max velocity (* -1 MAX-HORIZONTAL-VELOCITY))))
 
-
 (def is-solid (comp not non-solid-blocks :type))
 (defn coords-are-solid [bot [x y z]]
   (println x y z)
-  (let [b (chunks/block bot x y z)
-        t (is-solid (chunks/block bot x y z))]
-    (println b) t))
+  (is-solid (chunks/block bot x y z)))
 
 (defn collision [bot [min-x min-y min-z] [max-x max-y max-z]]
   (let [block-coords (cartesian-product (range min-x (+ 1 max-x))

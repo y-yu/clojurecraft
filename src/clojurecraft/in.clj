@@ -472,18 +472,18 @@
          :mode (-read-bool conn)))
 
 
-(defn- -parse-nibbles [data start len]
+(defn- -parse-nibbles [data start]
   (loop [i 0
          nibbles []
-         data (drop start data)]
-    (if (= i len)
-      (byte-array (/ len 2) nibbles)
+         data (subvec data start)]
+    (if (= i 2048)
+      nibbles
       (let [next-byte (first data)
             top-byte (top next-byte)
             bottom-byte (bottom next-byte)]
-        (recur (+ i 2)
+        (recur (+ i 1)
                (conj nibbles bottom-byte top-byte)
-               (drop 1 data))))))
+               (subvec data 1))))))
 
 (defn- -get-or-make-chunk [chunks coords]
   (or (@chunks coords)
@@ -497,36 +497,34 @@
         chunk)))
 
 (defn- -decode-mapchunk [{:keys [groundupcontinuous primarybitmap]} data-ba]
-  (loop [bitmap (reverse (nbyte-seq primarybitmap))
-         data (vec data-ba)
+  (loop [len (true-bit-count primarybitmap)
+         data data-ba
          block-types []
          block-metadata []
          block-light []
          sky-light []
          add-array []]
-    (if (= (first bitmap) 1)
+    (if (> len 0)
       (recur
-        (drop 1 bitmap)
-        (vec (drop 12544 data))
-        (concat block-types (take 4096 data))
-        (concat block-metadata (-parse-nibbles data 4096 4096))
-        (concat block-light (-parse-nibbles data 4096 4096))
-        (concat sky-light (-parse-nibbles data 4096 4096))
-        (concat add-array (-parse-nibbles data 4096 4096)))
-      (if (nil? data)
-        [block-types block-metadata block-light sky-light []]
+        (dec len)
+        (subvec data 12288)
+        (vec (concat block-types (subvec data 0 4096)))
+        (vec (concat block-metadata (-parse-nibbles data 4096)))
+        (vec (concat block-light (-parse-nibbles data 6144)))
+        (vec (concat sky-light (-parse-nibbles data 8193)))
+        (vec (concat add-array (-parse-nibbles data 10240))))
+      (if (= (count data) 256)
+        [block-types block-metadata block-light sky-light (subvec data 0 256)]
         [block-types block-metadata block-light sky-light []]))))
 
 
 (defn- -decompress-mapchunk [{:keys [groundupcontinuous primarybitmap] :as postdata}]
-  (let [bitmap (nbyte-seq primarybitmap)
-        buffer (byte-array (+ (* 12288 (count bitmap)) (if (true? groundupcontinuous) 256 0)))
+  (let [buffer (byte-array (+ (* 12288 (true-bit-count primarybitmap)) (if (= groundupcontinuous "true") 256 0)))
         decompressor (Inflater.)]
     (.setInput decompressor (:raw-data postdata) 0 (:compressedsize postdata))
     (.inflate decompressor buffer)
     (.end decompressor)
-    ;(spit "abc.txt" (vec buffer))
-    buffer))
+    (vec buffer)))
 
 (defn- -read-mapchunk-predata [conn]
   (assoc {}
@@ -543,19 +541,19 @@
        [types meta light sky add biome] (-decode-mapchunk postdata decompressed-data)] ; These are all byte-array's!
     (Chunk. types meta light sky add biome)))
 
-(defn- -chunk-from-partial-data [{{chunks :chunks} :world} postdata]
-  (let [x (:x postdata)
-        z (:z postdata)
-        decompressed-data (-decompress-mapchunk postdata)
-        [types meta light sky add biome] (-decode-mapchunk decompressed-data)  ; These are all byte-array's!
-        chunk-coords (coords-of-chunk-containing x z)
-        chunk (force (-get-or-make-chunk chunks chunk-coords))]
-    (Chunk. (replace-array-slice (:types (force @chunk)) 0 types)
-            (replace-array-slice (:metadata (force @chunk)) 0 meta)
-            (replace-array-slice (:light (force @chunk)) 0 light)
-            (replace-array-slice (:sky-light (force @chunk)) 0 sky)
-            (replace-array-slice (:add (force @chunk)) 0 add)
-            (replace-array-slice (:biome (force @chunk)) 0 biome))))
+;(defn- -chunk-from-partial-data [{{chunks :chunks} :world} postdata]
+;  (let [x (:x postdata)
+;        z (:z postdata)
+;        decompressed-data (-decompress-mapchunk postdata)
+;        [types meta light sky add biome] (-decode-mapchunk decompressed-data)  ; These are all byte-array's!
+;        chunk-coords (coords-of-chunk-containing x z)
+;        chunk (force (-get-or-make-chunk chunks chunk-coords))]
+;    (Chunk. (replace-array-slice (:types (force @chunk)) 0 types)
+;            (replace-array-slice (:metadata (force @chunk)) 0 meta)
+;            (replace-array-slice (:light (force @chunk)) 0 light)
+;            (replace-array-slice (:sky-light (force @chunk)) 0 sky)
+;            (replace-array-slice (:add (force @chunk)) 0 add)
+;            (replace-array-slice (:biome (force @chunk)) 0 biome))))
 
 (defn- read-packet-mapchunk [bot conn]
   (let [predata (-read-mapchunk-predata conn)
@@ -563,6 +561,7 @@
 
         chunk-coords [(:x postdata) (:z postdata)]
         data-ba (-decompress-mapchunk postdata)]
+    ;(println (true? (:groundupcontinuous predata)))
     (dosync (alter (:chunks (:world bot))
                    assoc chunk-coords 
                    (ref (delay (-chunk-from-full-data postdata)))))
@@ -575,6 +574,7 @@
            :metadata (replace-array-index (:metadata chunk) index meta))))
 
 (defn -update-single-block [bot x y z type meta]
+  (println x y z type)
   (dosync
     (let [chunk (chunk-containing x z (:chunks (:world bot)))
           i (block-index-in-chunk x y z)]
@@ -588,6 +588,7 @@
                     :z (-read-int conn)
                     :blocktype (-read-byte conn)
                     :blockmetadata (-read-byte conn))]
+    (println (:x data) (:y data) (:z data))
     (-update-single-block bot
                           (:x data) (:y data) (:z data)
                           (:blocktype data) (:blockmetadata data))
@@ -605,19 +606,19 @@
                          :dataarray [])]
     (let [payload (loop [i 0
                          payload prearrays]
-                    (if (>= i (:arraysize prearrays))
+                    (if (= i (:arraysize prearrays))
                            payload
-                           (recur (+ i 1)
+                           (recur (inc i)
                                   (assoc payload
-                                         :dataarray (conj (:dataarray payload)
-                                                          (-read-int conn))))))]
+                                         :dataarray
+                                         (conj (:dataarray payload) (-read-int conn))))))]
       (dorun (map 
                #(-update-single-block bot
-                                      (* (bit-and % 0xf0000000) (:x payload))  ;x coords
-                                      (bit-and % 0xff0000)  ;y coords
-                                      (* (bit-and % 0xf000000) (:z payload))  ;z coords
+                                      (* (bit-shift-right (bit-and % 0xf0000000) 28) (:x payload))  ;x coords
+                                      (bit-shift-right (bit-and % 0xff0000) 16)  ;y coords
+                                      (* (bit-shift-right (bit-and % 0xf000000) 24) (:z payload))  ;z coords
                                       (bit-and % 0xf)  ;block id
-                                      (bit-and % 0xfff0))  ;meta data                              
+                                      (bit-shift-right (bit-and % 0xfff0) 4))  ;meta data                              
                (:dataarray payload))) payload)))
 
 
@@ -848,6 +849,7 @@
                  (inc current))))
 
       ; Handle packet
+      ;(println packet-type)
       (if (nil? packet-type)
         (do
           (println "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")

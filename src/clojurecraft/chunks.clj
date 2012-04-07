@@ -7,7 +7,7 @@
 (defn- get-chunk
   "Get a chunk, making sure it has been forced."
   [chunks coords]
-  (let [possible-chunk (@chunks coords)]
+  (let [possible-chunk (get @chunks coords)]
     (when possible-chunk
       (force @possible-chunk)
       possible-chunk)))
@@ -26,12 +26,21 @@
     (+ (* (int (/ y 16)) 4096) (* iy 16) (* iz 16 16) ix)))
 
 (defn block-from-chunk [x y z chunk]
-  (println (count (:types (force @chunk))) (block-index-in-chunk x y z))
+  ;(println x y z)
+  ;(println (take 300 (drop 19700 (:types (force @chunk)))))
   (let [i (block-index-in-chunk x y z)
         block-type (get (:types (force @chunk)) i)
         block-meta (get (:metadata (force @chunk)) i)
         block-light (get (:light (force @chunk)) i)
         block-sky-light (get (:sky-light (force @chunk)) i)]
+    ;(println block-type block-meta block-light)
+    ;(println (drop 20000 (:types (force @chunk))))
+    ;(println
+      ;(take 10 (drop 8185(:types (force @chunk)))))
+      ;(take 10 (:metadata (force @chunk)))
+      ;(take 10 (:light (force @chunk)))
+      ;(take 10 (:sky-light(force @chunk))))
+      
     (Block. [x y z]
             (block-types (int block-type))
             block-meta

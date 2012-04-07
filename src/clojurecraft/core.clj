@@ -62,6 +62,7 @@
             [bounds-min bounds-max] (physics/player-bounds loc)
             new-data-y (physics/update-loc-y bot bounds-min bounds-max)
             {new-y :y new-onground :onground new-velocity :vel} new-data-y]
+        ;(println new-y)
         (alter player assoc :velocity new-velocity)
         (alter player assoc-in [:loc :y] new-y)
         (alter player assoc-in [:loc :stance] (+ new-y physics/CHAR-HEIGHT-EYES))
