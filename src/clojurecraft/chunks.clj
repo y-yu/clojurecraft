@@ -13,7 +13,6 @@
       possible-chunk)))
 
 (defn coords-of-chunk-containing [x z]
-  ;[x z])
   [(bit-shift-right x 4)
    (bit-shift-right z 4)])
 
@@ -26,21 +25,12 @@
     (+ (* (int (/ y 16)) 4096) (* iy 16) (* iz 16 16) ix)))
 
 (defn block-from-chunk [x y z chunk]
-  ;(println x y z)
-  ;(println (take 300 (drop 19700 (:types (force @chunk)))))
   (let [i (block-index-in-chunk x y z)
         block-type (get (:types (force @chunk)) i)
         block-meta (get (:metadata (force @chunk)) i)
         block-light (get (:light (force @chunk)) i)
         block-sky-light (get (:sky-light (force @chunk)) i)]
-    ;(println block-type block-meta block-light)
-    ;(println (drop 20000 (:types (force @chunk))))
-    ;(println
-      ;(take 10 (drop 8185(:types (force @chunk)))))
-      ;(take 10 (:metadata (force @chunk)))
-      ;(take 10 (:light (force @chunk)))
-      ;(take 10 (:sky-light(force @chunk))))
-      
+    
     (Block. [x y z]
             (block-types (int block-type))
             block-meta

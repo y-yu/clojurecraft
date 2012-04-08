@@ -33,7 +33,6 @@
 
 (def is-solid (comp not non-solid-blocks :type))
 (defn coords-are-solid [bot [x y z]]
-  (println x y z)
   (is-solid (chunks/block bot x y z)))
 
 (defn collision [bot [min-x min-y min-z] [max-x max-y max-z]]
